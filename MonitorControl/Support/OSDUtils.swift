@@ -191,15 +191,20 @@ final class MacOS27OSDHudController {
   }
 
   private func presentPanel(_ panel: OSDHudPanel) {
+    let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
     if !panel.isVisible || panel.alphaValue < 0.99 {
       if !panel.isVisible {
-        panel.alphaValue = 0
+        panel.alphaValue = reduceMotion ? 1.0 : 0.0
         panel.orderFrontRegardless()
       }
-      NSAnimationContext.runAnimationGroup { context in
-        context.duration = 0.14
-        context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-        panel.animator().alphaValue = 1.0
+      if reduceMotion {
+        panel.alphaValue = 1.0
+      } else {
+        NSAnimationContext.runAnimationGroup { context in
+          context.duration = 0.14
+          context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+          panel.animator().alphaValue = 1.0
+        }
       }
     } else {
       panel.orderFrontRegardless()
@@ -210,13 +215,19 @@ final class MacOS27OSDHudController {
     self.hideWorkItems[effectiveDisplayID]?.cancel()
     let workItem = DispatchWorkItem { [weak self, weak panel] in
       guard let panel = panel else { return }
-      NSAnimationContext.runAnimationGroup { context in
-        context.duration = 0.25
-        context.timingFunction = CAMediaTimingFunction(name: .easeIn)
-        panel.animator().alphaValue = 0.0
-      } completionHandler: {
-        if panel.alphaValue == 0.0 {
-          panel.orderOut(nil)
+      let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+      if reduceMotion {
+        panel.alphaValue = 0.0
+        panel.orderOut(nil)
+      } else {
+        NSAnimationContext.runAnimationGroup { context in
+          context.duration = 0.25
+          context.timingFunction = CAMediaTimingFunction(name: .easeIn)
+          panel.animator().alphaValue = 0.0
+        } completionHandler: {
+          if panel.alphaValue == 0.0 {
+            panel.orderOut(nil)
+          }
         }
       }
       self?.hideWorkItems[effectiveDisplayID] = nil
@@ -335,6 +346,9 @@ final class MacOS27OSDHudView: NSView {
     self.maxIconView.imageScaling = .scaleProportionallyDown
     self.maxIconView.contentTintColor = NSColor(calibratedWhite: 1.0, alpha: 0.96)
 
+    self.trackBarView.setAccessibilityElement(true)
+    self.trackBarView.setAccessibilityRole(.levelIndicator)
+
     rootContent.addSubview(self.titleLabel)
     rootContent.addSubview(self.badgeContainer)
     rootContent.addSubview(self.minIconView)
@@ -389,6 +403,8 @@ final class MacOS27OSDHudView: NSView {
     self.maxIconView.image = NSImage(systemSymbolName: icons.max, accessibilityDescription: nil)?.withSymbolConfiguration(maxCfg)
     self.trackBarView.progress = CGFloat(max(0, min(1, value)))
     self.trackBarView.isLocked = locked
+    self.trackBarView.setAccessibilityLabel(title)
+    self.trackBarView.setAccessibilityValue(badgeText)
     self.needsLayout = true
     self.layoutSubtreeIfNeeded()
   }
