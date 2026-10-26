@@ -313,7 +313,6 @@ final class MacOS27OSDHudView: NSView {
 
   private func setupViews() {
     self.wantsLayer = true
-    self.appearance = NSAppearance(named: .darkAqua)
 
     let glassView = NSGlassEffectView(frame: self.bounds)
     glassView.autoresizingMask = [.width, .height]
@@ -326,25 +325,20 @@ final class MacOS27OSDHudView: NSView {
     let rootContent = self.containerView
 
     self.titleLabel.font = NSFont.systemFont(ofSize: 13.0, weight: .semibold)
-    self.titleLabel.textColor = NSColor(calibratedWhite: 1.0, alpha: 0.96)
     self.titleLabel.lineBreakMode = .byTruncatingTail
     self.titleLabel.maximumNumberOfLines = 1
 
     self.badgeContainer.wantsLayer = true
     self.badgeContainer.layer?.cornerRadius = 8.0
     self.badgeContainer.layer?.cornerCurve = .continuous
-    self.badgeContainer.layer?.backgroundColor = NSColor(calibratedWhite: 0.96, alpha: 0.88).cgColor
 
     self.badgeLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 10.5, weight: .semibold)
-    self.badgeLabel.textColor = NSColor(calibratedWhite: 0.12, alpha: 0.96)
     self.badgeLabel.alignment = .center
     self.badgeLabel.maximumNumberOfLines = 1
     self.badgeContainer.addSubview(self.badgeLabel)
 
     self.minIconView.imageScaling = .scaleProportionallyDown
-    self.minIconView.contentTintColor = NSColor(calibratedWhite: 1.0, alpha: 0.96)
     self.maxIconView.imageScaling = .scaleProportionallyDown
-    self.maxIconView.contentTintColor = NSColor(calibratedWhite: 1.0, alpha: 0.96)
 
     self.trackBarView.setAccessibilityElement(true)
     self.trackBarView.setAccessibilityRole(.levelIndicator)
@@ -354,6 +348,27 @@ final class MacOS27OSDHudView: NSView {
     rootContent.addSubview(self.minIconView)
     rootContent.addSubview(self.trackBarView)
     rootContent.addSubview(self.maxIconView)
+
+    self.applyAppearanceColors()
+  }
+
+  override func viewDidChangeEffectiveAppearance() {
+    super.viewDidChangeEffectiveAppearance()
+    self.applyAppearanceColors()
+  }
+
+  private func applyAppearanceColors() {
+    let isDark = self.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+    let fgColor = isDark ? NSColor(calibratedWhite: 1.0, alpha: 0.96) : NSColor(calibratedWhite: 0.06, alpha: 0.92)
+    let badgeBgColor = isDark ? NSColor(calibratedWhite: 0.96, alpha: 0.88) : NSColor(calibratedWhite: 0.08, alpha: 0.82)
+    let badgeFgColor = isDark ? NSColor(calibratedWhite: 0.12, alpha: 0.96) : NSColor(calibratedWhite: 0.98, alpha: 0.96)
+
+    self.titleLabel.textColor = fgColor
+    self.minIconView.contentTintColor = fgColor
+    self.maxIconView.contentTintColor = fgColor
+    self.badgeContainer.layer?.backgroundColor = badgeBgColor.cgColor
+    self.badgeLabel.textColor = badgeFgColor
+    self.trackBarView.needsDisplay = true
   }
 
   override func layout() {
@@ -405,6 +420,7 @@ final class MacOS27OSDHudView: NSView {
     self.trackBarView.isLocked = locked
     self.trackBarView.setAccessibilityLabel(title)
     self.trackBarView.setAccessibilityValue(badgeText)
+    self.applyAppearanceColors()
     self.needsLayout = true
     self.layoutSubtreeIfNeeded()
   }
@@ -439,12 +455,18 @@ final class MacOS27TrackBarView: NSView {
   override func draw(_ dirtyRect: NSRect) {
     super.draw(dirtyRect)
     let bounds = self.bounds
+    let isDark = self.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+    let baseWhite: CGFloat = isDark ? 1.0 : 0.06
+    let trackAlpha: CGFloat = isDark ? 0.24 : 0.20
+    let fillAlpha: CGFloat = isDark ? 0.98 : 0.90
+    let dotAlpha: CGFloat = isDark ? 0.28 : 0.25
+
     let trackHeight: CGFloat = 4.0
     let trackY: CGFloat = 10.0
     let trackRect = NSRect(x: 0, y: trackY, width: bounds.width, height: trackHeight)
 
     let bgPath = NSBezierPath(roundedRect: trackRect, xRadius: trackHeight / 2.0, yRadius: trackHeight / 2.0)
-    NSColor(calibratedWhite: 1.0, alpha: 0.24).setFill()
+    NSColor(calibratedWhite: baseWhite, alpha: trackAlpha).setFill()
     bgPath.fill()
 
     let clamped = max(0, min(1, self.progress))
@@ -452,7 +474,7 @@ final class MacOS27TrackBarView: NSView {
       let fillWidth = max(trackHeight, round(bounds.width * clamped))
       let fillRect = NSRect(x: 0, y: trackY, width: fillWidth, height: trackHeight)
       let fillPath = NSBezierPath(roundedRect: fillRect, xRadius: trackHeight / 2.0, yRadius: trackHeight / 2.0)
-      NSColor(calibratedWhite: 1.0, alpha: 0.98).setFill()
+      NSColor(calibratedWhite: baseWhite, alpha: fillAlpha).setFill()
       fillPath.fill()
     }
 
@@ -462,7 +484,7 @@ final class MacOS27TrackBarView: NSView {
     let insetX: CGFloat = 16.25
     let usableWidth = max(1, bounds.width - insetX * 2)
     let step = usableWidth / CGFloat(dotCount - 1)
-    NSColor(calibratedWhite: 1.0, alpha: 0.28).setFill()
+    NSColor(calibratedWhite: baseWhite, alpha: dotAlpha).setFill()
     for index in 0 ..< dotCount {
       let dotX = insetX + CGFloat(index) * step - (dotSize / 2.0)
       let dotRect = NSRect(x: dotX, y: dotY, width: dotSize, height: dotSize)
