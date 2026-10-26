@@ -240,7 +240,7 @@ final class MacOS27OSDHudController {
 @available(macOS 26.0, *)
 final class OSDHudPanel: NSPanel {
   static let hudWidth: CGFloat = 292
-  static let hudHeight: CGFloat = 64
+  static let hudHeight: CGFloat = 63
 
   let hudView = MacOS27OSDHudView(frame: NSRect(x: 0, y: 0, width: OSDHudPanel.hudWidth, height: OSDHudPanel.hudHeight))
 
@@ -293,6 +293,8 @@ final class OSDHudPanel: NSPanel {
 
 @available(macOS 26.0, *)
 final class MacOS27OSDHudView: NSView {
+  private static let adaptiveBannerVariant = 9
+
   private let containerView = NSView()
   private let titleLabel = NSTextField(labelWithString: "")
   private let badgeContainer = NSView()
@@ -318,6 +320,9 @@ final class MacOS27OSDHudView: NSView {
     glassView.autoresizingMask = [.width, .height]
     glassView.cornerRadius = 19.5
     glassView.style = .regular
+    if glassView.responds(to: NSSelectorFromString("set_variant:")) {
+      glassView.setValue(Self.adaptiveBannerVariant, forKey: "_variant")
+    }
     self.addSubview(glassView)
     self.containerView.frame = glassView.bounds
     self.containerView.autoresizingMask = [.width, .height]
@@ -385,7 +390,7 @@ final class MacOS27OSDHudView: NSView {
     let titleWidth = min(ceil(titleSize.width), maxTitleWidth)
     let titleHeight = ceil(titleSize.height)
 
-    let headerY: CGFloat = 38.0
+    let headerY: CGFloat = 37.0
     self.titleLabel.frame = NSRect(x: 18.0, y: headerY, width: titleWidth, height: titleHeight)
 
     let badgeX = self.titleLabel.frame.maxX + 8.0
@@ -399,13 +404,13 @@ final class MacOS27OSDHudView: NSView {
     )
 
     let iconSize: CGFloat = 16.0
-    let sliderCenterY: CGFloat = 24.0
+    let sliderCenterY: CGFloat = 23.5
     self.minIconView.frame = NSRect(x: 15.0, y: round(sliderCenterY - iconSize / 2.0), width: iconSize, height: iconSize)
     self.maxIconView.frame = NSRect(x: bounds.width - 15.0 - iconSize, y: round(sliderCenterY - iconSize / 2.0), width: iconSize, height: iconSize)
 
     let trackX: CGFloat = 35.0
     let trackWidth = bounds.width - 70.0
-    self.trackBarView.frame = NSRect(x: trackX, y: 12.0, width: trackWidth, height: 18.0)
+    self.trackBarView.frame = NSRect(x: trackX, y: 11.5, width: trackWidth, height: 18.0)
   }
 
   func update(title: String, badgeText: String, command: Command, value: Float, locked: Bool) {
