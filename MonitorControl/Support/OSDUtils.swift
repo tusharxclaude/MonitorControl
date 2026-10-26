@@ -292,9 +292,29 @@ final class OSDHudPanel: NSPanel {
 }
 
 @available(macOS 26.0, *)
+private final class OSDHudLumaMonitor: NSObject, CALayerDelegate {
+  var onLumaChange: ((Double) -> Void)?
+
+  @objc(backdropLayer:didChangeLuma:)
+  func backdropLayer(_: CALayer, didChangeLuma luma: Double) {
+    if Thread.isMainThread {
+      self.onLumaChange?(luma)
+    } else {
+      DispatchQueue.main.async { [weak self] in
+        self?.onLumaChange?(luma)
+      }
+    }
+  }
+}
+
+@available(macOS 26.0, *)
 final class MacOS27OSDHudView: NSView {
   private static let adaptiveBannerVariant = 9
+  private static let hudCornerRadius: CGFloat = 19.5
+  private static let darkLumaThreshold: Double = 0.45
+  private static let lightLumaThreshold: Double = 0.53
 
+  private let glassView = NSGlassEffectView(frame: .zero)
   private let containerView = NSView()
   private let titleLabel = NSTextField(labelWithString: "")
   private let badgeContainer = NSView()
@@ -302,6 +322,9 @@ final class MacOS27OSDHudView: NSView {
   private let minIconView = NSImageView()
   private let maxIconView = NSImageView()
   private let trackBarView = MacOS27TrackBarView()
+  private let lumaMonitor = OSDHudLumaMonitor()
+  private var lumaBackdropLayer: CALayer?
+  private var isDarkBackdropOverride: Bool?
 
   override init(frame frameRect: NSRect) {
     super.init(frame: frameRect)
@@ -316,17 +339,19 @@ final class MacOS27OSDHudView: NSView {
   private func setupViews() {
     self.wantsLayer = true
 
-    let glassView = NSGlassEffectView(frame: self.bounds)
-    glassView.autoresizingMask = [.width, .height]
-    glassView.cornerRadius = 19.5
-    glassView.style = .regular
-    if glassView.responds(to: NSSelectorFromString("set_variant:")) {
-      glassView.setValue(Self.adaptiveBannerVariant, forKey: "_variant")
+    self.setupLumaBackdropLayer()
+
+    self.glassView.frame = self.bounds
+    self.glassView.autoresizingMask = [.width, .height]
+    self.glassView.cornerRadius = Self.hudCornerRadius
+    self.glassView.style = .regular
+    if self.glassView.responds(to: NSSelectorFromString("set_variant:")) {
+      self.glassView.setValue(Self.adaptiveBannerVariant, forKey: "_variant")
     }
-    self.addSubview(glassView)
-    self.containerView.frame = glassView.bounds
+    self.addSubview(self.glassView)
+    self.containerView.frame = self.glassView.bounds
     self.containerView.autoresizingMask = [.width, .height]
-    glassView.contentView = self.containerView
+    self.glassView.contentView = self.containerView
     let rootContent = self.containerView
 
     self.titleLabel.font = NSFont.systemFont(ofSize: 13.0, weight: .semibold)
@@ -357,13 +382,60 @@ final class MacOS27OSDHudView: NSView {
     self.applyAppearanceColors()
   }
 
+  private func setupLumaBackdropLayer() {
+    guard let backdropClass = NSClassFromString("CABackdropLayer") as? CALayer.Type else { return }
+    let layer = backdropClass.init()
+    layer.frame = self.bounds
+    layer.cornerRadius = Self.hudCornerRadius
+    layer.masksToBounds = true
+    layer.setValue(true, forKey: "windowServerAware")
+    layer.setValue(true, forKey: "tracksLuma")
+    layer.setValue(0.25, forKey: "scale")
+    layer.setValue(0.05, forKey: "lumaUpdateRate")
+    layer.setValue("monitorcontrol-osd-luma", forKey: "groupName")
+    self.lumaMonitor.onLumaChange = { [weak self] luma in
+      self?.handleBackdropLumaChange(luma)
+    }
+    layer.delegate = self.lumaMonitor
+    self.layer?.insertSublayer(layer, at: 0)
+    self.lumaBackdropLayer = layer
+  }
+
+  private func handleBackdropLumaChange(_ luma: Double) {
+    let newIsDark: Bool
+    if let current = self.isDarkBackdropOverride {
+      if current, luma > Self.lightLumaThreshold {
+        newIsDark = false
+      } else if !current, luma < Self.darkLumaThreshold {
+        newIsDark = true
+      } else {
+        newIsDark = current
+      }
+    } else {
+      newIsDark = luma < 0.5
+    }
+
+    guard self.isDarkBackdropOverride != newIsDark else { return }
+    self.isDarkBackdropOverride = newIsDark
+    let targetAppearance = NSAppearance(named: newIsDark ? .darkAqua : .aqua)
+    self.glassView.appearance = targetAppearance
+    self.applyAppearanceColors()
+  }
+
   override func viewDidChangeEffectiveAppearance() {
     super.viewDidChangeEffectiveAppearance()
     self.applyAppearanceColors()
   }
 
+  private var resolvedIsDark: Bool {
+    if let isDarkBackdropOverride = self.isDarkBackdropOverride {
+      return isDarkBackdropOverride
+    }
+    return self.glassView.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+  }
+
   private func applyAppearanceColors() {
-    let isDark = self.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+    let isDark = self.resolvedIsDark
     let fgColor = isDark ? NSColor(calibratedWhite: 1.0, alpha: 0.96) : NSColor(calibratedWhite: 0.06, alpha: 0.92)
     let badgeBgColor = isDark ? NSColor(calibratedWhite: 0.96, alpha: 0.88) : NSColor(calibratedWhite: 0.08, alpha: 0.82)
     let badgeFgColor = isDark ? NSColor(calibratedWhite: 0.12, alpha: 0.96) : NSColor(calibratedWhite: 0.98, alpha: 0.96)
@@ -373,12 +445,13 @@ final class MacOS27OSDHudView: NSView {
     self.maxIconView.contentTintColor = fgColor
     self.badgeContainer.layer?.backgroundColor = badgeBgColor.cgColor
     self.badgeLabel.textColor = badgeFgColor
-    self.trackBarView.needsDisplay = true
+    self.trackBarView.isDarkAppearance = isDark
   }
 
   override func layout() {
     super.layout()
     let bounds = self.bounds
+    self.lumaBackdropLayer?.frame = bounds
 
     let badgeSize = self.badgeLabel.fittingSize
     let badgePadX: CGFloat = 8.0
@@ -457,10 +530,18 @@ final class MacOS27TrackBarView: NSView {
     }
   }
 
+  var isDarkAppearance: Bool? {
+    didSet {
+      if oldValue != self.isDarkAppearance {
+        self.needsDisplay = true
+      }
+    }
+  }
+
   override func draw(_ dirtyRect: NSRect) {
     super.draw(dirtyRect)
     let bounds = self.bounds
-    let isDark = self.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+    let isDark = self.isDarkAppearance ?? (self.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua)
     let baseWhite: CGFloat = isDark ? 1.0 : 0.06
     let trackAlpha: CGFloat = isDark ? 0.24 : 0.20
     let fillAlpha: CGFloat = isDark ? 0.98 : 0.90
