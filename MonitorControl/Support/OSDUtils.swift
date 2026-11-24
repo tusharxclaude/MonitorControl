@@ -241,8 +241,10 @@ final class MacOS27OSDHudController {
 final class OSDHudPanel: NSPanel {
   static let hudWidth: CGFloat = 306
   static let hudHeight: CGFloat = 64
+  // Leave room for the glass rim to extend beyond the HUD view.
+  private static let glassPadding: CGFloat = 12
 
-  let hudView = MacOS27OSDHudView(frame: NSRect(x: 0, y: 0, width: OSDHudPanel.hudWidth, height: OSDHudPanel.hudHeight))
+  let hudView = MacOS27OSDHudView(frame: NSRect(x: OSDHudPanel.glassPadding, y: OSDHudPanel.glassPadding, width: OSDHudPanel.hudWidth, height: OSDHudPanel.hudHeight))
 
   override var canBecomeKey: Bool {
     true
@@ -261,7 +263,7 @@ final class OSDHudPanel: NSPanel {
   }
 
   init() {
-    let rect = NSRect(x: 0, y: 0, width: Self.hudWidth, height: Self.hudHeight)
+    let rect = NSRect(x: 0, y: 0, width: Self.hudWidth + 2 * Self.glassPadding, height: Self.hudHeight + 2 * Self.glassPadding)
     super.init(
       contentRect: rect,
       styleMask: [.borderless, .nonactivatingPanel],
@@ -276,7 +278,9 @@ final class OSDHudPanel: NSPanel {
     self.isMovable = false
     self.ignoresMouseEvents = true
     self.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
-    self.contentView = self.hudView
+    let contentView = NSView(frame: rect)
+    contentView.addSubview(self.hudView)
+    self.contentView = contentView
   }
 
   func position(on screen: NSScreen) {
@@ -286,7 +290,7 @@ final class OSDHudPanel: NSPanel {
     let originX = screenFrame.midX - (panelSize.width / 2.0)
     let menuBarInset = max(screenFrame.maxY - visibleFrame.maxY, 26.0)
     let topMargin: CGFloat = 14.0
-    let originY = screenFrame.maxY - menuBarInset - topMargin - panelSize.height
+    let originY = screenFrame.maxY - menuBarInset - topMargin + Self.glassPadding - panelSize.height
     self.setFrameOrigin(NSPoint(x: round(originX), y: round(originY)))
   }
 }
@@ -330,6 +334,7 @@ final class MacOS27OSDHudView: NSView {
   private var lumaBackdropLayer: CALayer?
   private var isDarkBackdropOverride: Bool?
   private var progress: CGFloat = 0
+  private var isBrightness = false
 
   override init(frame frameRect: NSRect) {
     super.init(frame: frameRect)
@@ -445,13 +450,21 @@ final class MacOS27OSDHudView: NSView {
     self.lumaBackdropLayer?.frame = self.lumaSampleFrame
     self.lumaBackdropLayer?.cornerRadius = self.lumaSampleFrame.height / 2.0
 
-    let iconSize = Self.iconSize
-    self.iconView.frame = NSRect(x: Self.iconX, y: round(Self.trackCenterY + 1.0 - iconSize / 2.0), width: iconSize, height: iconSize)
+    let trackCenterY = self.isBrightness ? bounds.midY : Self.trackCenterY
+    let iconSize = self.isBrightness ? 28.0 : Self.iconSize
+    let iconX = Self.iconX + (Self.iconSize - iconSize) / 2.0
+    let iconCenterY = self.isBrightness ? trackCenterY : trackCenterY + 1.0
+    self.iconView.frame = NSRect(x: iconX, y: round(iconCenterY - iconSize / 2.0), width: iconSize, height: iconSize)
 
     let trackWidth = bounds.width - Self.trackX - Self.trackTrailingInset
-    self.trackBarView.frame = NSRect(x: Self.trackX, y: Self.trackCenterY - Self.trackHeight / 2.0, width: trackWidth, height: Self.trackHeight)
+    self.trackBarView.frame = NSRect(x: Self.trackX, y: trackCenterY - Self.trackHeight / 2.0, width: trackWidth, height: Self.trackHeight)
 
     let calloutSize = self.calloutView.fittingSizeForContent
+    if self.isBrightness {
+      self.calloutView.frame = NSRect(x: self.trackBarView.frame.maxX - calloutSize.width, y: trackCenterY + 9.0, width: calloutSize.width, height: calloutSize.height)
+      return
+    }
+
     let fillEndX = self.trackBarView.frame.minX + trackWidth * self.progress
     let minX = 8.0
     let maxX = bounds.width - 8.0 - calloutSize.width
@@ -462,10 +475,13 @@ final class MacOS27OSDHudView: NSView {
 
   func update(title: String, badgeText: String, command: Command, value: Float, locked: Bool) {
     self.progress = CGFloat(max(0, min(1, value)))
+    self.isBrightness = command == .brightness
+    self.calloutView.isCompact = self.isBrightness
     self.calloutView.text = badgeText
-    let iconConfig = NSImage.SymbolConfiguration(pointSize: 20.0, weight: .regular)
+    let iconConfig = NSImage.SymbolConfiguration(pointSize: self.isBrightness ? 24.0 : 20.0, weight: self.isBrightness ? .medium : .regular)
     self.iconView.image = NSImage(systemSymbolName: self.resolveSymbol(for: command, value: value), accessibilityDescription: nil)?.withSymbolConfiguration(iconConfig)
     self.trackBarView.progress = self.progress
+    self.trackBarView.usesContinuousRail = self.isBrightness
     self.trackBarView.isLocked = locked
     self.trackBarView.setAccessibilityLabel(title)
     self.trackBarView.setAccessibilityValue(badgeText)
@@ -488,12 +504,21 @@ final class MacOS27OSDHudView: NSView {
 
 @available(macOS 26.0, *)
 final class MacOS27CalloutView: NSView {
-  private static let bodyHeight: CGFloat = 16.0
-  private static let caretHeight: CGFloat = 4.5
   private static let caretWidth: CGFloat = 9.0
-  private static let padX: CGFloat = 9.0
 
   private let label = NSTextField(labelWithString: "")
+  private var bodyHeight: CGFloat { self.isCompact ? 14.0 : 16.0 }
+  private var caretHeight: CGFloat { self.isCompact ? 0.0 : 4.5 }
+  private var horizontalPadding: CGFloat { self.isCompact ? 6.0 : 9.0 }
+
+  var isCompact = false {
+    didSet {
+      guard oldValue != self.isCompact else { return }
+      self.label.font = NSFont.monospacedDigitSystemFont(ofSize: self.isCompact ? 9.0 : 10.5, weight: .semibold)
+      self.needsLayout = true
+      self.needsDisplay = true
+    }
+  }
 
   var text: String = "" {
     didSet {
@@ -533,31 +558,33 @@ final class MacOS27CalloutView: NSView {
 
   var fittingSizeForContent: NSSize {
     let textSize = self.label.fittingSize
-    return NSSize(width: ceil(textSize.width) + Self.padX * 2, height: Self.bodyHeight + Self.caretHeight)
+    return NSSize(width: ceil(textSize.width) + self.horizontalPadding * 2, height: self.bodyHeight + self.caretHeight)
   }
 
   override func layout() {
     super.layout()
     let textSize = self.label.fittingSize
     self.label.frame = NSRect(
-      x: Self.padX,
-      y: Self.caretHeight + round((Self.bodyHeight - ceil(textSize.height)) / 2.0),
+      x: self.horizontalPadding,
+      y: self.caretHeight + round((self.bodyHeight - ceil(textSize.height)) / 2.0),
       width: ceil(textSize.width),
       height: ceil(textSize.height)
     )
   }
 
   override func draw(_: NSRect) {
-    let bodyRect = NSRect(x: 0, y: Self.caretHeight, width: self.bounds.width, height: Self.bodyHeight)
-    let path = NSBezierPath(roundedRect: bodyRect, xRadius: Self.bodyHeight / 2.0, yRadius: Self.bodyHeight / 2.0)
-    let halfCaret = Self.caretWidth / 2.0
-    let caretX = max(bodyRect.height / 2.0 + halfCaret, min(bodyRect.width - bodyRect.height / 2.0 - halfCaret, self.caretCenterX))
-    let caret = NSBezierPath()
-    caret.move(to: NSPoint(x: caretX - halfCaret, y: Self.caretHeight + 0.5))
-    caret.line(to: NSPoint(x: caretX, y: 0))
-    caret.line(to: NSPoint(x: caretX + halfCaret, y: Self.caretHeight + 0.5))
-    caret.close()
-    path.append(caret)
+    let bodyRect = NSRect(x: 0, y: self.caretHeight, width: self.bounds.width, height: self.bodyHeight)
+    let path = NSBezierPath(roundedRect: bodyRect, xRadius: self.bodyHeight / 2.0, yRadius: self.bodyHeight / 2.0)
+    if !self.isCompact {
+      let halfCaret = Self.caretWidth / 2.0
+      let caretX = max(bodyRect.height / 2.0 + halfCaret, min(bodyRect.width - bodyRect.height / 2.0 - halfCaret, self.caretCenterX))
+      let caret = NSBezierPath()
+      caret.move(to: NSPoint(x: caretX - halfCaret, y: self.caretHeight + 0.5))
+      caret.line(to: NSPoint(x: caretX, y: 0))
+      caret.line(to: NSPoint(x: caretX + halfCaret, y: self.caretHeight + 0.5))
+      caret.close()
+      path.append(caret)
+    }
     let fill = self.isDarkAppearance ? NSColor(calibratedWhite: 0.78, alpha: 0.92) : NSColor(calibratedWhite: 0.08, alpha: 0.82)
     fill.setFill()
     path.fill()
@@ -569,6 +596,14 @@ final class MacOS27TrackBarView: NSView {
   private static let segmentCount = 16
   private static let segmentGap: CGFloat = 2.0
   private static let segmentHeight: CGFloat = 3.5
+
+  var usesContinuousRail = false {
+    didSet {
+      if oldValue != self.usesContinuousRail {
+        self.needsDisplay = true
+      }
+    }
+  }
 
   var progress: CGFloat = 0 {
     didSet {
@@ -597,25 +632,58 @@ final class MacOS27TrackBarView: NSView {
     let baseWhite: CGFloat = isDark ? 1.0 : 0.06
     let emptyAlpha: CGFloat = isDark ? 0.28 : 0.22
     let fillAlpha: CGFloat = isDark ? 0.98 : 0.90
+    let emptyColor = NSColor(calibratedWhite: baseWhite, alpha: emptyAlpha)
+    let fillColor = NSColor(calibratedWhite: baseWhite, alpha: fillAlpha)
+    let fillEndX = self.isLocked ? 0 : bounds.width * max(0, min(1, self.progress))
+
+    if self.usesContinuousRail {
+      self.drawRail(fillEndX: fillEndX, emptyColor: emptyColor, fillColor: fillColor)
+      return
+    }
 
     let count = CGFloat(Self.segmentCount)
     let segmentWidth = (bounds.width - Self.segmentGap * (count - 1)) / count
     let segmentY = round((bounds.height - Self.segmentHeight) / 2.0)
-    let fillEndX = self.isLocked ? 0 : bounds.width * max(0, min(1, self.progress))
 
     for index in 0 ..< Self.segmentCount {
       let segmentX = CGFloat(index) * (segmentWidth + Self.segmentGap)
       let rect = NSRect(x: segmentX, y: segmentY, width: segmentWidth, height: Self.segmentHeight)
       let path = NSBezierPath(roundedRect: rect, xRadius: Self.segmentHeight / 2.0, yRadius: Self.segmentHeight / 2.0)
-      NSColor(calibratedWhite: baseWhite, alpha: emptyAlpha).setFill()
+      emptyColor.setFill()
       path.fill()
       if fillEndX > rect.minX {
         NSGraphicsContext.saveGraphicsState()
         NSBezierPath(rect: NSRect(x: 0, y: 0, width: fillEndX, height: bounds.height)).setClip()
-        NSColor(calibratedWhite: baseWhite, alpha: fillAlpha).setFill()
+        fillColor.setFill()
         path.fill()
         NSGraphicsContext.restoreGraphicsState()
       }
     }
+  }
+
+  private func drawRail(fillEndX: CGFloat, emptyColor: NSColor, fillColor: NSColor) {
+    let height: CGFloat = 4.0
+    let dividerWidth: CGFloat = 1.0
+    let rail = NSRect(x: 0, y: self.bounds.midY - height / 2.0, width: self.bounds.width, height: height)
+    let segmentWidth = rail.width / CGFloat(Self.segmentCount)
+    let scale = self.window?.backingScaleFactor ?? 1.0
+    let sections = NSBezierPath()
+    var sectionStart = rail.minX
+    for index in 1 ..< Self.segmentCount {
+      let dividerStart = CGFloat(index) * segmentWidth - dividerWidth / 2.0
+      let sectionEnd = (dividerStart * scale).rounded() / scale
+      sections.appendRect(NSRect(x: sectionStart, y: rail.minY, width: sectionEnd - sectionStart, height: height))
+      sectionStart = sectionEnd + dividerWidth
+    }
+    sections.appendRect(NSRect(x: sectionStart, y: rail.minY, width: rail.maxX - sectionStart, height: height))
+
+    NSGraphicsContext.saveGraphicsState()
+    NSBezierPath(roundedRect: rail, xRadius: height / 2.0, yRadius: height / 2.0).addClip()
+    sections.addClip()
+    fillColor.setFill()
+    NSBezierPath.fill(NSRect(x: rail.minX, y: rail.minY, width: fillEndX, height: height))
+    emptyColor.setFill()
+    NSBezierPath.fill(NSRect(x: fillEndX, y: rail.minY, width: rail.maxX - fillEndX, height: height))
+    NSGraphicsContext.restoreGraphicsState()
   }
 }
